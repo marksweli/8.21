@@ -104,17 +104,23 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
             asrs = alpha_s * matProps.solid_density
             pressure = particle[np].pressure
 
+            relative_velocity = particle[np].v - particle[np].vs
+            drag = matProps._drag_factor(relative_velocity.norm(), alpha_s)
+            # Eq. (4.92): diffusivity that turns the central weak form into the
+            # donor-acceptor upwind scheme used by Eqs. (4.93) and (4.94)
+            upwind_diffusivity = matProps._upwind_diffusivity(relative_velocity.norm())
+
             water_strain_rate = matProps._strain_rate_norm2D(velocity_gradient)
             sediment_strain_rate = matProps._strain_rate_norm2D(sediment_gradient)
             eddy_viscosity = matProps._eddy_viscosity(water_strain_rate, alpha_s)
             water_viscosity = matProps.water_viscosity + eddy_viscosity
-            sediment_viscosity = matProps._sediment_viscosity(alpha_s) + matProps._eddy_viscosity(sediment_strain_rate, alpha_s)
+            # the upwinding of the relative advection of Eq. (4.68), i.e. Eq. (4.94),
+            # is equivalent to this extra diffusion of the sediment velocity
+            sediment_viscosity = matProps._sediment_viscosity(alpha_s) + \
+                matProps._eddy_viscosity(sediment_strain_rate, alpha_s) + upwind_diffusivity
             water_stress = matProps._deviatoric_free_stress2D(velocity_gradient, water_viscosity)
             sediment_stress = matProps._deviatoric_free_stress2D(sediment_gradient, sediment_viscosity)
             diffusivity = eddy_viscosity / matProps.schmidt
-
-            relative_velocity = particle[np].v - particle[np].vs
-            drag = matProps._drag_factor(relative_velocity.norm(), alpha_s)
             # momentum exchange per unit mixture volume, Eq. (4.52)
             exchange = -drag * alpha_s * relative_velocity + drag * (diffusivity / alpha_f) * grad_alpha
 
@@ -133,10 +139,13 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
 
             water_body = particle[np].m * gravity2D + volume * exchange
             sediment_body = particle[np].ms * gravity2D - volume * exchange
-            # Eq. (4.67): weak form of the drift flux alpha_s rho_s (u_s - u_f).  Assembling the
-            # sediment mass rate on the grid and redistributing it with the same weights makes the
-            # concentration transport discretely conservative, because sum_I grad(N_I) vanishes.
-            sediment_flux = -volume * asrs * relative_velocity
+            # Eq. (4.67): weak form of the drift flux alpha_s rho_s (u_s - u_f), upwinded with
+            # the donor-acceptor operator of Eqs. (4.92)-(4.93), which adds the diffusive flux
+            # -rho_s D grad(alpha_s).  Assembling the sediment mass rate on the grid and
+            # redistributing it with the same weights makes the concentration transport
+            # discretely conservative, because sum_I grad(N_I) vanishes.
+            sediment_flux = -volume * asrs * relative_velocity - \
+                volume * matProps.solid_density * upwind_diffusivity * grad_alpha
 
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]

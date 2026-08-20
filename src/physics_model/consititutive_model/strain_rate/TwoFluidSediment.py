@@ -178,6 +178,21 @@ class TwoFluidSedimentModel(Fluid):
         return lamda_d * 0.75 * drag_coefficient * self.density / self.particle_diameter * relative_velocity_norm
 
     @ti.func
+    def _upwind_diffusivity(self, relative_velocity_norm):
+        """Numerical diffusivity of the donor-acceptor upwind scheme, Eq. (4.92).
+
+        Equations (4.93) and (4.94) discretise the drift mass flux of Eq. (4.67) and the
+        relative advection of Eq. (4.68) with the direction sensitive (donor-acceptor)
+        operator of Eq. (4.92).  Splitting that operator into its symmetric and its
+        skew part shows that it is the central operator plus a diffusion of coefficient
+        ``0.5 |u_s - u_f| L``, ``L`` being the length of the discrete stencil (here the
+        background cell).  The balance equations are assembled here in the (central)
+        weak form, so the upwinding is reintroduced through this diffusivity; the
+        resulting flux is still a flux and therefore remains exactly conservative.
+        """
+        return 0.5 * relative_velocity_norm * self.element_length
+
+    @ti.func
     def _deviatoric_free_stress2D(self, velocity_gradient, viscosity):
         """tau*_ij / rho = nu (du_i/dx_j + du_j/dx_i), Eq. (4.50)."""
         stress = ZEROMAT2x2
